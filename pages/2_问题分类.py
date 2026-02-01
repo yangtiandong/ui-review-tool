@@ -345,8 +345,11 @@ if 'classification_result' in st.session_state:
     with col2:
         st.metric("分类数量", len(stats['categories']))
     with col3:
-        most_common = max(stats['categories'].items(), key=lambda x: x[1])
-        st.metric("最多类别", f"{most_common[0]} ({most_common[1]})")
+        if stats['categories']:
+    most_common = max(stats['categories'].items(), key=lambda x: x[1])
+    st.metric("最多类别", f"{most_common[0]} ({most_common[1]})")
+else:
+    st.metric("最多类别", "无数据")
     with col4:
         st.metric("输出格式", "Excel")
     
