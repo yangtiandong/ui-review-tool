@@ -9,8 +9,15 @@ import pandas as pd
 import json
 from datetime import datetime
 import io
+import traceback
 
-from ai_generator import AIGenerator
+# 尝试导入AI生成器，如果失败则使用简化版本
+try:
+    from ai_generator import AIGenerator
+    AI_AVAILABLE = True
+except ImportError:
+    AI_AVAILABLE = False
+    st.error("⚠️ AI生成器模块未找到，将只提供规则分类功能")
 
 st.set_page_config(page_title="问题分类", page_icon="🏷️", layout="wide")
 
@@ -27,16 +34,47 @@ st.markdown("""
         padding: 2rem;
         background-color: #fafafa;
     }
+    .stDataFrame {
+        border: 1px solid #e6e9ef;
+        border-radius: 0.5rem;
+    }
 </style>
 """, unsafe_allow_html=True)
+
+def classify_by_keywords(problem_desc):
+    """基于关键词的规则分类"""
+    keyword_categories = {
+        '功能完备性': ['功能', '无法', '不能', '缺失', '不支持', '没有', '失效', '异常'],
+        '信息清晰性': ['不清晰', '看不懂', '不明确', '混乱', '找不到', '隐蔽', '文案', '提示', '显示'],
+        '任务高效性': ['操作', '步骤', '流程', '效率', '麻烦', '复杂', '慢', '体验', '繁琐'],
+        '系统可靠性': ['报错', '错误', '异常', '故障', '崩溃', '卡顿', '加载', '性能', '超时'],
+        '一致性': ['不一致', '不统一', '不同', '样式', '格式', '颜色', '字体', '布局', '风格'],
+    }
+    
+    # 关键词匹配
+    matched_category = '功能完备性'  # 默认分类
+    matched_keywords = []
+    
+    for category, keywords in keyword_categories.items():
+        for keyword in keywords:
+            if keyword in problem_desc:
+                matched_category = category
+                matched_keywords.append(keyword)
+                break
+        if matched_keywords:
+            break
+    
+    reason = f"基于关键词匹配: {', '.join(matched_keywords)}" if matched_keywords else "未匹配到明确关键词，使用默认分类"
+    
+    return matched_category, reason
 
 # 侧边栏配置
 with st.sidebar:
     st.markdown("##### ⚙️ 配置选项")
     
-    use_ai = st.checkbox("使用AI分类", value=True)
+    use_ai = st.checkbox("使用AI分类", value=AI_AVAILABLE, disabled=not AI_AVAILABLE)
     
-    if use_ai:
+    if use_ai and AI_AVAILABLE:
         ai_provider = st.selectbox(
             "选择AI服务",
             ["deepseek", "openai"],
@@ -148,15 +186,18 @@ if uploaded_file:
             st.stop()
         
         # 检查AI配置
-        use_ai_classification = use_ai and 'ai_api_key' in st.session_state
+        use_ai_classification = use_ai and AI_AVAILABLE and 'ai_api_key' in st.session_state
         
         if not use_ai_classification:
-            st.warning("⚠️ 未配置AI服务，将使用规则分类（准确性较低）")
+            if not AI_AVAILABLE:
+                st.warning("⚠️ AI模块不可用，将使用规则分类（准确性较低）")
+            else:
+                st.warning("⚠️ 未配置AI服务，将使用规则分类（准确性较低）")
         
         if st.button("🚀 开始智能分类", type="primary", use_container_width=True):
             with st.spinner("🤖 正在进行智能分类，请稍候..."):
                 try:
-                    # 读取分类手册（内嵌版本）
+                    # 内嵌分类手册
                     classification_manual = """
 # UI走查问题分类定义手册
 
@@ -221,86 +262,103 @@ if uploaded_file:
                     
                     if use_ai_classification:
                         # 使用AI分类
-                        generator = AIGenerator(
-                            provider=st.session_state.get('ai_provider', 'deepseek'),
-                            api_key=st.session_state.get('ai_api_key')
-                        )
-                        
-                        # 批量处理问题
+                        try:
+                            generator = AIGenerator(
+                                provider=st.session_state.get('ai_provider', 'deepseek'),
+                                api_key=st.session_state.get('ai_api_key')
+                            )
+                            
+                            # 批量处理问题
+                            valid_problems = df[df["问题描述"].notna()]
+                            
+                            progress_bar = st.progress(0)
+                            status_text = st.empty()
+                            
+                            for idx, row in valid_problems.iterrows():
+                                problem_desc = str(row["问题描述"])
+                                
+                                # 更新进度
+                                progress = (len(results) + 1) / len(valid_problems)
+                                progress_bar.progress(progress)
+                                status_text.text(f"正在分类第 {len(results) + 1}/{len(valid_problems)} 个问题...")
+                                
+                                # AI分类
+                                try:
+                                    classification_result = generator.classify_problem(problem_desc, classification_manual)
+                                    
+                                    # 解析结果
+                                    try:
+                                        result_data = json.loads(classification_result)
+                                        category = result_data.get('category', '功能完备性')
+                                        reason = result_data.get('reason', '无法确定分类原因')
+                                        reference = result_data.get('reference', '')
+                                    except json.JSONDecodeError:
+                                        # 如果JSON解析失败，使用文本解析
+                                        category = '功能完备性'
+                                        reason = '分类解析失败'
+                                        reference = ''
+                                        
+                                        # 尝试从文本中提取信息
+                                        if '功能完备性' in classification_result:
+                                            category = '功能完备性'
+                                        elif '信息清晰性' in classification_result:
+                                            category = '信息清晰性'
+                                        elif '任务高效性' in classification_result:
+                                            category = '任务高效性'
+                                        elif '系统可靠性' in classification_result:
+                                            category = '系统可靠性'
+                                        elif '一致性' in classification_result:
+                                            category = '一致性'
+                                        
+                                        reason = f"AI分类结果: {classification_result[:50]}..."
+                                    
+                                except Exception as ai_error:
+                                    # AI分类失败，使用规则分类
+                                    category, reason = classify_by_keywords(problem_desc)
+                                    reference = ''
+                                
+                                results.append({
+                                    'index': idx,
+                                    'category': category,
+                                    'reason': reason,
+                                    'reference': reference
+                                })
+                            
+                            progress_bar.empty()
+                            status_text.empty()
+                            
+                        except Exception as e:
+                            st.error(f"AI分类初始化失败: {str(e)}")
+                            # 回退到规则分类
+                            use_ai_classification = False
+                    
+                    if not use_ai_classification:
+                        # 使用规则分类（简单关键词匹配）
                         valid_problems = df[df["问题描述"].notna()]
                         
                         progress_bar = st.progress(0)
                         status_text = st.empty()
                         
                         for idx, row in valid_problems.iterrows():
-                            problem_desc = row["问题描述"]
+                            problem_desc = str(row["问题描述"])
                             
                             # 更新进度
                             progress = (len(results) + 1) / len(valid_problems)
                             progress_bar.progress(progress)
                             status_text.text(f"正在分类第 {len(results) + 1}/{len(valid_problems)} 个问题...")
                             
-                            # AI分类
-                            classification_result = generator.classify_problem(problem_desc, classification_manual)
-                            
-                            # 解析结果
-                            try:
-                                result_data = json.loads(classification_result)
-                                category = result_data.get('category', '功能完备性')
-                                reason = result_data.get('reason', '无法确定分类原因')
-                                reference = result_data.get('reference', '')
-                            except:
-                                # 如果JSON解析失败，使用默认值
-                                category = '功能完备性'
-                                reason = '分类解析失败'
-                                reference = ''
+                            # 关键词匹配
+                            category, reason = classify_by_keywords(problem_desc)
                             
                             results.append({
                                 'index': idx,
                                 'category': category,
                                 'reason': reason,
-                                'reference': reference
+                                'reference': ''  # 规则分类没有参照依据
                             })
                         
                         progress_bar.empty()
                         status_text.empty()
-                        
-                    else:
-                        # 使用规则分类（简单关键词匹配）
-                        keyword_categories = {
-                            '功能完备性': ['功能', '无法', '不能', '缺失', '不支持', '没有'],
-                            '信息清晰性': ['不清晰', '看不懂', '不明确', '混乱', '找不到', '隐蔽', '文案', '提示'],
-                            '任务高效性': ['操作', '步骤', '流程', '效率', '麻烦', '复杂', '慢', '体验'],
-                            '系统可靠性': ['报错', '错误', '异常', '故障', '崩溃', '卡顿', '加载', '性能'],
-                            '一致性': ['不一致', '不统一', '不同', '样式', '格式', '颜色', '字体', '布局'],
-                        }
-                        
-                        valid_problems = df[df["问题描述"].notna()]
-                        
-                        for idx, row in valid_problems.iterrows():
-                            problem_desc = str(row["问题描述"])
-                            
-                            # 关键词匹配
-                            matched_category = '功能完备性'  # 默认分类
-                            matched_keywords = []
-                            
-                            for category, keywords in keyword_categories.items():
-                                for keyword in keywords:
-                                    if keyword in problem_desc:
-                                        matched_category = category
-                                        matched_keywords.append(keyword)
-                                        break
-                                if matched_keywords:
-                                    break
-                            
-                            reason = f"基于关键词匹配: {', '.join(matched_keywords)}" if matched_keywords else "未匹配到明确关键词"
-                            
-                            results.append({
-                                'index': idx,
-                                'category': matched_category,
-                                'reason': reason,
-                                'reference': ''  # 规则分类没有参照依据
-                            })
                     
                     # 将结果添加到原始数据
                     df_result = df.copy()
@@ -315,9 +373,12 @@ if uploaded_file:
                     
                     # 保存结果到session state
                     st.session_state['classification_result'] = df_result
+                    
+                    # 计算统计信息
+                    categories_count = df_result['问题分类'].value_counts().to_dict()
                     st.session_state['classification_stats'] = {
-                        'total': len(valid_problems),
-                        'categories': df_result['问题分类'].value_counts().to_dict()
+                        'total': len([r for r in results if r['category']]),
+                        'categories': categories_count
                     }
                     
                     st.success(f"✅ 分类完成！共处理 {len(results)} 个问题")
@@ -325,6 +386,8 @@ if uploaded_file:
                     
                 except Exception as e:
                     st.error(f"❌ 分类失败: {str(e)}")
+                    with st.expander("🔍 查看错误详情"):
+                        st.code(traceback.format_exc())
     
     except Exception as e:
         st.error(f"❌ 文件读取失败: {str(e)}")
@@ -346,17 +409,18 @@ if 'classification_result' in st.session_state:
         st.metric("分类数量", len(stats['categories']))
     with col3:
         if stats['categories']:
-    most_common = max(stats['categories'].items(), key=lambda x: x[1])
-    st.metric("最多类别", f"{most_common[0]} ({most_common[1]})")
-else:
-    st.metric("最多类别", "无数据")
+            most_common = max(stats['categories'].items(), key=lambda x: x[1])
+            st.metric("最多类别", f"{most_common[0]} ({most_common[1]})")
+        else:
+            st.metric("最多类别", "无数据")
     with col4:
         st.metric("输出格式", "Excel")
     
     # 分类统计图表
-    st.markdown("### 📈 分类统计")
-    category_df = pd.DataFrame(list(stats['categories'].items()), columns=['分类', '数量'])
-    st.bar_chart(category_df.set_index('分类'))
+    if stats['categories']:
+        st.markdown("### 📈 分类统计")
+        category_df = pd.DataFrame(list(stats['categories'].items()), columns=['分类', '数量'])
+        st.bar_chart(category_df.set_index('分类'))
     
     # 结果预览
     st.markdown("### 📋 结果预览")
@@ -369,7 +433,9 @@ else:
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df_result.to_excel(writer, sheet_name='分类结果', index=False)
-        category_df.to_excel(writer, sheet_name='统计汇总', index=False)
+        if stats['categories']:
+            category_df = pd.DataFrame(list(stats['categories'].items()), columns=['分类', '数量'])
+            category_df.to_excel(writer, sheet_name='统计汇总', index=False)
     
     excel_data = output.getvalue()
     
