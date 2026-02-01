@@ -177,8 +177,8 @@ st.markdown("### 让AI助力你的工作，从3小时到3分钟")
 
 st.markdown("---")
 
-# 功能卡片
-col1, col2, col3 = st.columns(3)
+# 功能卡片 - 只显示两个核心功能
+col1, col2 = st.columns(2)
 
 with col1:
     st.markdown("### 📋 版本UI走查")
@@ -192,8 +192,26 @@ with col2:
     if st.button("开始使用", key="btn2"):
         st.switch_page("pages/2_问题分类.py")
 
-with col3:
-    st.markdown("### 🔄 交叉走查任务")
-    st.markdown("智能生成团队交叉走查任务分配方案")
-    if st.button("开始使用", key="btn3"):
-        st.switch_page("pages/3_交叉走查.py")
+# 可选：添加即将推出的功能预告
+st.markdown("---")
+st.markdown("### 🚀 即将推出")
+
+with st.expander("更多功能开发中...", expanded=False):
+    st.markdown("""
+    **🔄 交叉走查任务**
+    - 多版本对比分析
+    - 智能任务分配
+    - 团队协作管理
+    
+    **📊 数据分析报告**
+    - 走查质量统计
+    - 问题趋势分析
+    - 团队效率评估
+    
+    **⚙️ 自定义配置**
+    - 个性化走查规则
+    - 团队标准模板
+    - API集成配置
+    
+    *敬请期待后续版本更新！*
+    """)
